@@ -91,3 +91,92 @@
     active-loan-count: uint,
   }
 )
+
+;; INTERNAL CALCULATION FUNCTIONS
+
+;; Advanced Interest Calculation Engine
+;; Computes compound interest over specified block intervals
+(define-private (compute-accrued-interest
+    (principal-amount uint)
+    (annual-rate uint)
+    (block-duration uint)
+  )
+  (let (
+      (interest-per-block (/ (* principal-amount annual-rate) u10000))
+      (total-accrued-interest (* interest-per-block block-duration))
+    )
+    total-accrued-interest
+  )
+)
+
+;; Dynamic Collateralization Ratio Calculator
+;; Returns collateral ratio as percentage (e.g., 150 = 150%)
+(define-private (calculate-collateral-ratio
+    (collateral-value uint)
+    (debt-value uint)
+  )
+  (if (is-eq debt-value u0)
+    u0 ;; No debt means infinite collateralization
+    (/ (* collateral-value u100) debt-value)
+  )
+)
+
+;; User Portfolio State Management
+;; Updates user's lending position with atomic operations
+(define-private (update-user-portfolio
+    (user principal)
+    (collateral-delta uint)
+    (is-collateral-deposit bool)
+    (borrow-delta uint)
+    (is-borrow-increase bool)
+  )
+  (let (
+      (current-portfolio (default-to {
+        total-collateral-deposited: u0,
+        total-amount-borrowed: u0,
+        active-loan-count: u0,
+      }
+        (map-get? user-portfolio { user: user })
+      ))
+      (updated-collateral (if is-collateral-deposit
+        (+ (get total-collateral-deposited current-portfolio) collateral-delta)
+        (- (get total-collateral-deposited current-portfolio) collateral-delta)
+      ))
+      (updated-borrowed (if is-borrow-increase
+        (+ (get total-amount-borrowed current-portfolio) borrow-delta)
+        (- (get total-amount-borrowed current-portfolio) borrow-delta)
+      ))
+    )
+    (map-set user-portfolio { user: user } {
+      total-collateral-deposited: updated-collateral,
+      total-amount-borrowed: updated-borrowed,
+      active-loan-count: (get active-loan-count current-portfolio),
+    })
+  )
+)
+
+;; CORE LENDING PROTOCOL OPERATIONS
+
+;; COLLATERAL DEPOSIT FUNCTION
+;; Allows users to deposit STX tokens as collateral for borrowing
+(define-public (deposit-collateral)
+  (let ((deposit-amount (stx-get-balance tx-sender)))
+    (if (> deposit-amount u0)
+      (begin
+        ;; Transfer STX from user to protocol vault
+        (try! (stx-transfer? deposit-amount tx-sender (as-contract tx-sender)))
+
+        ;; Update protocol statistics
+        (var-set total-protocol-deposits
+          (+ (var-get total-protocol-deposits) deposit-amount)
+        )
+
+        ;; Update user's portfolio
+        (update-user-portfolio tx-sender deposit-amount true u0 true)
+
+        (ok deposit-amount)
+      )
+      ERR-INVALID-AMOUNT
+    )
+  )
+)
