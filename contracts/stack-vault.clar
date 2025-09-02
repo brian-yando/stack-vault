@@ -180,3 +180,78 @@
     )
   )
 )
+
+;; STX BORROWING FUNCTION  
+;; Enables users to borrow STX against their deposited collateral
+(define-public (borrow-stx (requested-amount uint))
+  (let (
+      (user-portfolio-data (default-to {
+        total-collateral-deposited: u0,
+        total-amount-borrowed: u0,
+        active-loan-count: u0,
+      }
+        (map-get? user-portfolio { user: tx-sender })
+      ))
+      (available-collateral (get total-collateral-deposited user-portfolio-data))
+      (current-debt (get total-amount-borrowed user-portfolio-data))
+    )
+    (if (and
+        (> requested-amount u0)
+        (>=
+          (calculate-collateral-ratio available-collateral
+            (+ current-debt requested-amount)
+          )
+          (var-get minimum-collateral-ratio)
+        )
+      )
+      (begin
+        ;; Transfer borrowed STX from protocol to user
+        (try! (as-contract (stx-transfer? requested-amount (as-contract tx-sender) tx-sender)))
+
+        ;; Update protocol borrow statistics
+        (var-set total-protocol-borrows
+          (+ (var-get total-protocol-borrows) requested-amount)
+        )
+
+        ;; Update user's portfolio
+        (update-user-portfolio tx-sender u0 true requested-amount true)
+
+        (ok requested-amount)
+      )
+      ERR-INSUFFICIENT-COLLATERAL
+    )
+  )
+)
+
+;; LOAN REPAYMENT FUNCTION
+;; Allows users to repay their borrowed STX amount
+(define-public (repay-loan (repayment-amount uint))
+  (let (
+      (user-portfolio-data (default-to {
+        total-collateral-deposited: u0,
+        total-amount-borrowed: u0,
+        active-loan-count: u0,
+      }
+        (map-get? user-portfolio { user: tx-sender })
+      ))
+      (outstanding-debt (get total-amount-borrowed user-portfolio-data))
+    )
+    (if (<= repayment-amount outstanding-debt)
+      (begin
+        ;; Transfer repayment from user to protocol
+        (try! (stx-transfer? repayment-amount tx-sender (as-contract tx-sender)))
+
+        ;; Update protocol statistics
+        (var-set total-protocol-borrows
+          (- (var-get total-protocol-borrows) repayment-amount)
+        )
+
+        ;; Update user's portfolio
+        (update-user-portfolio tx-sender u0 true repayment-amount false)
+
+        (ok repayment-amount)
+      )
+      ERR-INVALID-AMOUNT
+    )
+  )
+)
