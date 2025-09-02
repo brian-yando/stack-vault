@@ -338,3 +338,82 @@
     )
   )
 )
+
+;; PROTOCOL ANALYTICS & READ-ONLY FUNCTIONS
+
+;; USER PORTFOLIO QUERY
+;; Returns comprehensive user lending position information
+(define-read-only (get-user-portfolio (user principal))
+  (default-to {
+    total-collateral-deposited: u0,
+    total-amount-borrowed: u0,
+    active-loan-count: u0,
+  }
+    (map-get? user-portfolio { user: user })
+  )
+)
+
+;; PROTOCOL STATISTICS DASHBOARD
+;; Provides real-time protocol health and configuration metrics
+(define-read-only (get-protocol-analytics)
+  {
+    total-value-locked: (var-get total-protocol-deposits),
+    total-borrowed-amount: (var-get total-protocol-borrows),
+    minimum-collateral-ratio: (var-get minimum-collateral-ratio),
+    liquidation-threshold: (var-get liquidation-threshold),
+    protocol-fee-rate: (var-get protocol-fee),
+    utilization-rate: (if (> (var-get total-protocol-deposits) u0)
+      (/ (* (var-get total-protocol-borrows) u100)
+        (var-get total-protocol-deposits)
+      )
+      u0
+    ),
+  }
+)
+
+;; PROTOCOL GOVERNANCE & ADMINISTRATION
+
+;; COLLATERAL RATIO ADJUSTMENT
+;; Allows protocol owner to adjust minimum collateralization requirements
+(define-public (update-minimum-collateral-ratio (new-ratio uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL-OWNER) ERR-UNAUTHORIZED-ACCESS)
+    (asserts!
+      (and
+        (>= new-ratio MIN-COLLATERAL-RATIO)
+        (<= new-ratio MAX-COLLATERAL-RATIO)
+      )
+      ERR-INVALID-PARAMETER
+    )
+    (var-set minimum-collateral-ratio new-ratio)
+    (ok true)
+  )
+)
+
+;; LIQUIDATION THRESHOLD CONFIGURATION
+;; Updates the threshold at which positions become liquidatable
+(define-public (update-liquidation-threshold (new-threshold uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL-OWNER) ERR-UNAUTHORIZED-ACCESS)
+    (asserts!
+      (and
+        (>= new-threshold MIN-COLLATERAL-RATIO)
+        (<= new-threshold (var-get minimum-collateral-ratio))
+      )
+      ERR-INVALID-PARAMETER
+    )
+    (var-set liquidation-threshold new-threshold)
+    (ok true)
+  )
+)
+
+;; PROTOCOL FEE MANAGEMENT
+;; Adjusts platform fees for sustainable protocol operations
+(define-public (update-protocol-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL-OWNER) ERR-UNAUTHORIZED-ACCESS)
+    (asserts! (<= new-fee MAX-PROTOCOL-FEE) ERR-INVALID-PARAMETER)
+    (var-set protocol-fee new-fee)
+    (ok true)
+  )
+)
