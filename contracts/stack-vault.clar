@@ -255,3 +255,86 @@
     )
   )
 )
+
+;; COLLATERAL WITHDRAWAL FUNCTION
+;; Enables users to withdraw excess collateral while maintaining minimum ratio
+(define-public (withdraw-collateral (withdrawal-amount uint))
+  (let (
+      (user-portfolio-data (default-to {
+        total-collateral-deposited: u0,
+        total-amount-borrowed: u0,
+        active-loan-count: u0,
+      }
+        (map-get? user-portfolio { user: tx-sender })
+      ))
+      (available-collateral (get total-collateral-deposited user-portfolio-data))
+      (outstanding-debt (get total-amount-borrowed user-portfolio-data))
+    )
+    (if (and
+        (<= withdrawal-amount available-collateral)
+        (>=
+          (calculate-collateral-ratio (- available-collateral withdrawal-amount)
+            outstanding-debt
+          )
+          (var-get minimum-collateral-ratio)
+        )
+      )
+      (begin
+        ;; Transfer collateral from protocol to user
+        (try! (as-contract (stx-transfer? withdrawal-amount (as-contract tx-sender) tx-sender)))
+
+        ;; Update protocol statistics
+        (var-set total-protocol-deposits
+          (- (var-get total-protocol-deposits) withdrawal-amount)
+        )
+
+        ;; Update user's portfolio
+        (update-user-portfolio tx-sender withdrawal-amount false u0 true)
+
+        (ok withdrawal-amount)
+      )
+      ERR-INSUFFICIENT-COLLATERAL
+    )
+  )
+)
+
+;; LIQUIDATION ENGINE
+
+;; AUTOMATED LIQUIDATION SYSTEM
+;; Liquidates undercollateralized positions to maintain protocol solvency
+(define-public (execute-liquidation (target-user principal))
+  (let (
+      (target-portfolio (unwrap! (map-get? user-portfolio { user: target-user }) ERR-LOAN-NOT-FOUND))
+      (collateral-amount (get total-collateral-deposited target-portfolio))
+      (debt-amount (get total-amount-borrowed target-portfolio))
+      (current-ratio (calculate-collateral-ratio collateral-amount debt-amount))
+    )
+    ;; Prevent self-liquidation
+    (asserts! (not (is-eq target-user tx-sender)) ERR-UNAUTHORIZED-ACCESS)
+
+    ;; Ensure user has outstanding debt
+    (asserts! (> debt-amount u0) ERR-INVALID-AMOUNT)
+
+    ;; Check if liquidation threshold is breached
+    (if (< current-ratio (var-get liquidation-threshold))
+      (begin
+        ;; Transfer all collateral to liquidator
+        (try! (as-contract (stx-transfer? collateral-amount (as-contract tx-sender) tx-sender)))
+
+        ;; Remove user from portfolio registry
+        (map-delete user-portfolio { user: target-user })
+
+        ;; Update protocol statistics
+        (var-set total-protocol-deposits
+          (- (var-get total-protocol-deposits) collateral-amount)
+        )
+        (var-set total-protocol-borrows
+          (- (var-get total-protocol-borrows) debt-amount)
+        )
+
+        (ok true)
+      )
+      ERR-LIQUIDATION-THRESHOLD-NOT-MET
+    )
+  )
+)
